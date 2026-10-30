@@ -3,8 +3,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="firebase-config.js"></script>
 <style>
 :root{--bg:#f4f6f8;--card:#fff;--tx:#1f2933;--mu:#6b7785;--pr:#1b6b4a;--bd:#dde3e8}
 *{box-sizing:border-box}body{margin:0;font:14px system-ui,sans-serif;background:var(--bg);color:var(--tx);display:flex;min-height:100vh}
@@ -27,10 +26,41 @@ const DEF=[["1110","Kas","d"],["1120","Bank","d"],["1130","Piutang Usaha","d"],[
 let S=JSON.parse(localStorage.pam||'null')||{coa:DEF,sa:{},jr:[],aset:[],pr:{},pb:{},set:{piutang:"1130",pph:"1140",jual:"4110",ppn:"2120",beban:"6120"}};
 S.inv=[];S.vd=S.vd||[];let Y=+localStorage.y||new Date().getFullYear(),P='dash',db=null,own=false;
 const tp=k=>k[0],coaOf=k=>S.coa.find(a=>a.kode==k)||{nama:'?',nm:'d'},sum=a=>a.reduce((x,y)=>x+y,0);
-function save(){fixNo();const c={...S,inv:[]};localStorage.pam=JSON.stringify(c);if(db){own=true;db.collection('pam').doc('main').set({data:JSON.stringify(c)}).catch(e=>$('st').textContent='Gagal simpan: '+e.message)}}
-function connect(){const cfg=JSON.parse(localStorage.fbcfg||'null');if(!cfg||!window.firebase)return;try{firebase.initializeApp(cfg);db=firebase.firestore();
-db.collection('pam').doc('main').onSnapshot(d=>{if(d.metadata.hasPendingWrites)return;if(d.exists){const x=JSON.parse(d.data().data);S={...x,inv:S.inv};localStorage.pam=JSON.stringify({...S,inv:[]});go(P)}});
-db.collection('invoices').onSnapshot(q=>{S.inv=q.docs.map(d=>({id:d.id,...d.data()}));go(P)});$('st').textContent='● Online (realtime)'}catch(e){$('st').textContent='Firebase error: '+e.message}}
+// ===== Firebase (REST) : login + baca data Invoice PAM + simpan data ERP =====
+const FB=window.FIREBASE_CONFIG||{};
+const fbOn=()=>!!(FB.apiKey&&FB.projectId);
+let TOK=null,svT=0,busyS=false,IP={meta:null,entries:[],stamp:0};
+const fbEmail=u=>String(u).trim().toLowerCase()+'@'+(FB.emailDomain||'pam-invoice.app');
+const fbPw=p=>{p=String(p).toLowerCase();return p.length>=6?p:p+'#'.repeat(6-p.length)};
+async function fbPost(url,body){const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error((j.error&&j.error.message)||'HTTP '+r.status);return j}
+function setTok(j,u){TOK={u,id:j.idToken||j.id_token,rt:j.refreshToken||j.refresh_token,exp:Date.now()+(+(j.expiresIn||j.expires_in||3600))*1000};sessionStorage.fbrt=JSON.stringify({u,rt:TOK.rt})}
+async function fbLogin(u,p){setTok(await fbPost('https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key='+FB.apiKey,{email:fbEmail(u),password:fbPw(p),returnSecureToken:true}),u)}
+function restoreTok(){try{const x=JSON.parse(sessionStorage.fbrt||'null');if(x)TOK={u:x.u,rt:x.rt,id:null,exp:0}}catch(e){}}
+async function fbTok(){if(TOK&&TOK.id&&Date.now()<TOK.exp-60000)return TOK.id;setTok(await fbPost('https://securetoken.googleapis.com/v1/token?key='+FB.apiKey,{grant_type:'refresh_token',refresh_token:TOK.rt}),TOK.u);return TOK.id}
+const FSU=()=>'https://firestore.googleapis.com/v1/projects/'+FB.projectId+'/databases/(default)/documents/invoice/';
+async function fsGet(n){const r=await fetch(FSU()+n,{headers:{Authorization:'Bearer '+await fbTok()}});if(r.status==404)return null;const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error((j.error&&j.error.message)||'HTTP '+r.status);const f=j.fields&&j.fields.json&&j.fields.json.stringValue;return f?JSON.parse(f):null}
+async function fsSet(n,obj){const s=JSON.stringify(obj);if(s.length>900000)throw new Error('Data ERP melebihi batas 1 MB dokumen Firestore');const r=await fetch(FSU()+n+'?updateMask.fieldPaths=json',{method:'PATCH',headers:{Authorization:'Bearer '+await fbTok(),'Content-Type':'application/json'},body:JSON.stringify({fields:{json:{stringValue:s}}})});if(!r.ok){const j=await r.json().catch(()=>({}));throw new Error((j.error&&j.error.message)||'HTTP '+r.status)}}
+function save(){fixNo();S.at=Date.now();const c={...S,inv:[]};localStorage.pam=JSON.stringify(c);if(TOK){clearTimeout(svT);svT=setTimeout(pushErp,1500);$('st').textContent='● menyimpan…'}}
+async function pushErp(){svT=0;try{await fsSet('erp-main',{...S,inv:[]});$('st').textContent='● Online · tersimpan '+new Date().toLocaleTimeString('id-ID')}catch(e){$('st').textContent='Gagal simpan: '+e.message}}
+// replika aturan invoicepam: gabung hari berurutan berharga sama, jumlah dibulatkan per baris
+function ipRows(es){const dn=s=>{const a=s.split('-').map(Number);return Math.round(Date.UTC(a[0],a[1]-1,a[2])/864e5)},m=new Map();
+for(const e of es){const w=Math.round(Number(e.weight)*100)/100,p=Number(e.price);if(!e.date||!(w>0)||!(p>0))continue;const k=e.date+'|'+p;if(!m.has(k))m.set(k,{dn:dn(e.date),price:p,weight:0});m.get(k).weight=Math.round((m.get(k).weight+w)*100)/100}
+const l=[...m.values()].sort((a,b)=>a.dn-b.dn||a.price-b.price),rows=[],open=[];
+for(const it of l){const r=open.find(x=>x.price===it.price&&x.endN===it.dn-1);if(r){r.endN=it.dn;r.weight=Math.round((r.weight+it.weight)*100)/100}else{const n={price:it.price,weight:it.weight,endN:it.dn};rows.push(n);open.push(n)}}
+rows.forEach(r=>r.amount=Math.round(r.weight*r.price+1e-6));return rows}
+// 1 invoice = 1 pembeli x 1 bulan ; dpp (field lama) = harga jual sebelum pajak
+function buildInv(){const m=IP.meta;if(!m)return;const bs={};(m.buyers||[]).forEach(b=>bs[b.id]=b);const g={};
+IP.entries.forEach(e=>{if(!e||!(e.weight>0&&e.price>0)||!bs[e.buyerId])return;const k=e.buyerId+'|'+e.date.slice(0,7);(g[k]=g[k]||[]).push(e)});
+S.inv=Object.keys(g).sort().map(k=>{const es=g[k],b=bs[es[0].buyerId],ym=k.split('|')[1],tot=sum(ipRows(es).map(r=>r.amount)),dpp=Math.round(tot*11/12),ppn=Math.round(dpp*0.12),rate=b.pph22?Number(b.pph22Rate)||0:0,pph=Math.round(tot*rate/100),d=(m.docs||{})[k]||{},last=es.map(e=>e.date).sort().pop(),a=ym.split('-').map(Number),end=ym+'-'+String(new Date(Date.UTC(a[0],a[1],0)).getUTCDate()).padStart(2,'0');
+return{id:k,noInvoice:d.invoiceNo||('Draft '+b.kode+'/'+ym),tanggal:d.tgl||last||end,pembeli:b.nama,dpp:tot,ppn,pph22:pph}}).filter(i=>i.dpp>0)}
+async function syncAll(force){if(!TOK||busyS)return;busyS=true;let ch=!!force;
+try{const meta=await fsGet('meta');
+if(meta&&(force||(meta.updatedAt||0)!==IP.stamp)){const ys=meta.years||[],parts=await Promise.all(ys.map(y=>fsGet('entries-'+y)));IP={meta,entries:parts.flat().filter(Boolean),stamp:meta.updatedAt||0};buildInv();ch=true}
+const erp=await fsGet('erp-main');
+if(erp&&(erp.at||0)>(S.at||0)&&!svT){const inv=S.inv;S={...erp,inv};S.vd=S.vd||[];localStorage.pam=JSON.stringify({...S,inv:[]});ch=true}
+else if(!erp&&!svT&&S.at){pushErp()}
+$('st').textContent='● Online · sinkron '+new Date().toLocaleTimeString('id-ID');if(ch)go(P)}
+catch(e){$('st').textContent='Sinkron gagal: '+e.message}finally{busyS=false}}
 // ===== perhitungan =====
 const inYear=(t,y)=>(t||'').slice(0,4)==y;
 function autoJr(y){return S.inv.filter(i=>inYear(i.tanggal,y)).sort((a,b)=>a.tanggal.localeCompare(b.tanggal)).map(i=>{const d=+i.dpp||0,p=+i.ppn||0,h=+i.pph22||0,id='AUTO-'+i.id;return{id,no:'JP-'+(i.noInvoice||i.id),void:(S.vd||[]).includes(id),tgl:i.tanggal,ket:'Penjualan '+(i.noInvoice||i.id)+' - '+(i.pembeli||''),auto:1,lines:[{k:S.set.piutang,d:d+p-h,c:0},{k:S.set.pph,d:h,c:0},{k:S.set.jual,d:0,c:d},{k:S.set.ppn,d:0,c:p}]}})}
@@ -91,7 +121,7 @@ S.inv.filter(i=>i.pembeli==pm&&inYear(i.tanggal,Y)).forEach(i=>{const v=(+i.dpp|
 S.jr.filter(j=>inYear(j.tgl,Y)).forEach(j=>j.lines.filter(l=>l.k==S.set.piutang&&l.p==pm).forEach(l=>{ps+=(+l.d||0)-(+l.c||0);pr.push([j.tgl,j.ket,+l.d||0,+l.c||0,ps])}));
 const T=r=>`<table><tr><th>Tgl</th><th>Ket</th><th class="n">Debit</th><th class="n">Kredit</th><th class="n">Saldo</th></tr>${r.map(x=>`<tr><td>${x[0]}</td><td>${x[1]}</td><td class="n">${fmt(x[2])}</td><td class="n">${fmt(x[3])}</td><td class="n">${fmt(x[4])}</td></tr>`).join('')}</table>`;
 return`<div class="card"><select onchange="ba=this.value;go('bb')">${opt().replace(`value="${k}"`,`value="${k}" selected`)}</select>${T(rows)}</div><div class="card"><b>Buku besar piutang per pembeli</b><br><select onchange="bp=this.value;go('bb')">${bs.map(b=>`<option ${b==pm?'selected':''}>${b}</option>`)}</select>${T(pr)}</div>`},
-pj(){return`<div class="card"><div class="k">Invoice dibaca realtime dari koleksi Firestore "invoices". Satu jurnal otomatis per invoice sesuai tanggal invoice; bila invoice diubah atau dihapus di web invoice, jurnal ikut berubah.</div><table><tr><th>Tgl</th><th>No</th><th>Pembeli</th><th class="n">DPP</th><th class="n">PPN</th><th class="n">PPh22</th></tr>${S.inv.filter(i=>inYear(i.tanggal,Y)).sort((a,b)=>a.tanggal.localeCompare(b.tanggal)).map(i=>`<tr><td>${i.tanggal}</td><td>${i.noInvoice||i.id}</td><td>${i.pembeli}</td><td class="n">${fmt(i.dpp)}</td><td class="n">${fmt(i.ppn)}</td><td class="n">${fmt(i.pph22)}</td></tr>`).join('')}</table></div>
+pj(){return`<div class="card"><div class="k">Invoice dibaca otomatis dari data Invoice PAM di Firestore (dicek tiap 20 detik); satu invoice = satu pembeli per bulan. Satu jurnal otomatis per invoice sesuai tanggal invoice; bila invoice diubah atau dihapus di web invoice, jurnal ikut berubah.</div><table><tr><th>Tgl</th><th>No</th><th>Pembeli</th><th class="n">Penjualan</th><th class="n">PPN</th><th class="n">PPh22</th></tr>${S.inv.filter(i=>inYear(i.tanggal,Y)).sort((a,b)=>a.tanggal.localeCompare(b.tanggal)).map(i=>`<tr><td>${i.tanggal}</td><td>${i.noInvoice||i.id}</td><td>${i.pembeli}</td><td class="n">${fmt(i.dpp)}</td><td class="n">${fmt(i.ppn)}</td><td class="n">${fmt(i.pph22)}</td></tr>`).join('')}</table></div>
 <div class="card"><b>Jurnal otomatis ${Y}</b><table>${autoJr(Y).map(j=>`<tr><td>${j.tgl}</td><td>${j.ket}</td><td>${j.lines.map(l=>(l.d?'D ':'K ')+coaOf(l.k).nama+' '+fmt(l.d||l.c)).join(' | ')}</td></tr>`).join('')}</table></div>`},
 as(){const gs=[...new Set(S.aset.map(a=>a.kelompok))];
 return`<div class="card"><div class="row"><button class="g" onclick="tpl('template-aset',['kode','nama','kelompok','tgl_perolehan','harga','umur_tahun','akum_awal'],[['A001','Traktor','Kendaraan','2020-03-01',250000000,8,50000000]])">Template aset</button><label>Impor: <input type="file" onchange="imp(event,rs=>{S.aset=rs.map(x=>({kode:x.kode,nama:x.nama,kelompok:x.kelompok,tgl:String(x.tgl_perolehan),harga:num(x.harga),umur:num(x.umur_tahun)||1,akum:num(x.akum_awal)}));save();go('as')})"></label></div>
@@ -100,7 +130,7 @@ return`<div class="card"><div class="row"><button class="g" onclick="tpl('templa
 kap(){const L=S.jr.filter(j=>j.kap&&inYear(j.tgl,Y));return`<div class="card"><div class="row"><input type="date" id="kt" value="${Y}-12-31"><select id="kb">${opt(k=>tp(k)>4)}</select><select id="ka">${opt(k=>tp(k)==1)}</select><input id="kn" placeholder="Nilai"><input id="kk" placeholder="Nama aset/keterangan"><button onclick="kapit()">Kapitalisasi</button></div><div class="k">Jurnal otomatis: Debit akun aset, Kredit akun biaya, lalu tercatat di daftar aset (umur isi di menu Aset Tetap).</div></div><div class="card"><table>${L.map(j=>`<tr><td>${j.tgl}</td><td>${j.ket}</td><td class="n">${fmt(j.lines[0].d)}</td></tr>`).join('')}</table></div>`},
 lap(){const t=window.lt||'nr';return`<div class="card"><div class="row">${[['nr','Neraca'],['lr','Laba Rugi'],['pm','Perubahan Modal']].map(x=>`<button class="${x[0]==t?'':'g'}" onclick="lt='${x[0]}';go('lap')">${x[1]}</button>`).join('')}<button class="g" onclick="expX('${t}')">Excel</button><button class="g" onclick="expP('${t}')">PDF</button></div>${repHTML(t)}</div>
 <div class="card"><b>Impor pembanding tahun lalu untuk ${Y}</b><div class="row"><button class="g" onclick="tpl('template-pembanding',['kode','nama','nilai_tahun_lalu'],[['1110','Kas',1000000]])">Template</button><input type="file" onchange="imp(event,rs=>{S.pr[Y]={};rs.forEach(x=>S.pr[Y][String(x.kode)]=num(x.nilai_tahun_lalu));save();go('lap')})"><button class="r" onclick="delete S.pr[Y];save();go('lap')">Hapus impor</button></div><div class="k">Bila belum diimpor, pembanding diambil dari transaksi ${Y-1}.</div></div>`},
-set(){const c=JSON.parse(localStorage.fbcfg||'{}');return`<div class="card"><b>Firebase config (JSON)</b><br><textarea id="fc" rows=7 style="width:100%">${JSON.stringify(c,null,1)}</textarea><button onclick="localStorage.fbcfg=fc.value;location.reload()">Simpan & sambungkan</button></div>
+set(){const c=JSON.parse(localStorage.fbcfg||'{}');return`<div class="card"><b>Status Firebase</b><div class="k">${fbOn()?"Terhubung ke proyek "+FB.projectId+". Login memakai akun Firebase Authentication yang sama dengan Invoice PAM.":"firebase-config.js tidak ditemukan: aplikasi berjalan lokal (tanpa Firestore)."}</div></div>
 <div class="card"><b>Akun otomatis penjualan</b><div class="row">${[['piutang','Piutang'],['pph','PPh 22 dimuka'],['jual','Penjualan'],['ppn','Hutang PPN'],['beban','Beban penyusutan']].map(x=>`<label>${x[1]} <select onchange="S.set.${x[0]}=this.value;save()">${opt().replace(`value="${S.set[x[0]]}"`,`value="${S.set[x[0]]}" selected`)}</select></label>`).join('')}</div></div>`}};
 function sv(k,f,v){(S.sa[Y]=S.sa[Y]||{})[k]=S.sa[Y][k]||{d:0,k:0};S.sa[Y][k][f]=num(v);save();go('sa')}
 function svJ(){const L=window.ed;L.tgl=$('jt').value;L.ket=$('jk').value;L.lines=L.lines.filter(l=>l.k);const d=sum(L.lines.map(l=>+l.d||0)),c=sum(L.lines.map(l=>+l.c||0));if(!L.lines.length||d!=c||!d)return alert('Debit harus sama dengan kredit dan tidak nol ('+fmt(d)+' vs '+fmt(c)+')');
@@ -114,9 +144,11 @@ S.aset.push({kode:id,nama:$('kk').value,kelompok:coaOf($('ka').value).nama,tgl:$
 function nextNo(y,pre){pre=pre||'JU';const re=new RegExp('^'+pre+'-'+y+'-(\\d+)$');let m=0;S.jr.forEach(j=>{const r=re.exec(j.no||'');if(r)m=Math.max(m,+r[1])});return pre+'-'+y+'-'+String(m+1).padStart(4,'0')}
 function fixNo(){S.jr.filter(j=>!j.no).sort((a,b)=>a.tgl.localeCompare(b.tgl)).forEach(j=>{const y=j.tgl.slice(0,4);j.no=j.id.startsWith('PNY')?'JPY-'+y:nextNo(y,j.kap?'JK':'JU')})}
 const noOf=j=>j.no||j.id;
-function login(){const u=$('lu').value.trim().toLowerCase(),p=$('lp').value.trim().toLowerCase();if(u=='wilson'&&p=='945766'){sessionStorage.ok=1;$('lg').style.display='none';boot()}else $('le').textContent='User atau password salah'}
+async function login(){const u=$('lu').value.trim().toLowerCase(),p=$('lp').value.trim();$('le').textContent='';
+if(fbOn()){try{await fbLogin(u,p);sessionStorage.ok=1;$('lg').style.display='none';boot()}catch(e){$('le').textContent=/INVALID|EMAIL_NOT|PASSWORD|USER_/.test(e.message)?'User atau password salah':'Gagal masuk: '+e.message}}
+else if(u=='wilson'&&p.toLowerCase()=='945766'){sessionStorage.ok=1;$('lg').style.display='none';boot()}else $('le').textContent='User atau password salah'}
 function logout(){sessionStorage.clear();location.reload()}
-function boot(){connect();go('dash')}
+async function boot(){go('dash');if(fbOn()){if(!TOK)restoreTok();if(!TOK)return logout();await syncAll(true);setInterval(()=>{if(document.visibilityState=='visible')syncAll()},20000)}}
 function backup(){const b=new Blob([JSON.stringify({ver:2,waktu:new Date().toISOString(),data:{...S,inv:[]}})],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='backup-pam-'+new Date().toISOString().slice(0,10)+'.json';a.click()}
 function restore(e){const f=e.target.files[0];if(!f)return;f.text().then(t=>{if(!confirm('Timpa SEMUA data dengan file backup ini?'))return;S={...JSON.parse(t).data,inv:S.inv};save();go(P)})}
 PG.jr=function(){const L=window.ed||{id:'',no:'',tgl:Y+'-01-31',ket:'',lines:[{k:'',d:0,c:0},{k:'',d:0,c:0}]};window.ed=L;
