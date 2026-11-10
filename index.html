@@ -326,7 +326,7 @@ if(t=='1'){if(/akumulasi|tanah|bangunan|kendaraan|peralatan|mesin|tanaman|aset t
 if(t=='2'){if(/jangka panjang|pinjaman bank|leasing|obligasi|sewa pembiayaan/.test(n))return'LJ';return k[1]=='1'?'LP':(/hutang|utang|pajak|ppn|gaji|biaya/.test(n)?'LP':'LJ')}
 if(t=='3'){if(/komprehensif|revaluasi/.test(n))return'EO';return/laba|prive|dividen|cadangan/.test(n)?'ES':'EM'}
 if(/pajak.*bunga|pph final.*bunga|bunga.*pph final|pajak bunga/.test(n))return'IN';if(/(laba|rugi|keuntungan|kerugian).*(penjualan|pelepasan).*(aset|truk|traktor|tractor|kendaraan|mesin|alat)/.test(n))return'IN';if(/pajak penghasilan|pph badan|pajak final|pajak kini|pajak tangguhan/.test(n))return'PJ';if(/dihentikan/.test(n))return'DH';if(/komprehensif|revaluasi/.test(n))return'OC';
-if(/bunga pinjaman|beban bunga|beban keuangan|bunga bank|bunga leasing/.test(n))return'PD';if(/pendapatan bunga|jasa giro|bunga deposito|dividen diterima|investasi|bagi hasil/.test(n))return'IN';return'OP'}
+if(t>='5'&&/bunga pinjaman|beban bunga|beban keuangan|bunga bank|bunga leasing|bunga utang/.test(n))return'PD';if(/pendapatan bunga|jasa giro|bunga deposito|dividen diterima|investasi|bagi hasil/.test(n))return'IN';return'OP'}
 const psOf=a=>a.ps||autoPs(a);
 function fnOf(a){if(a.fn)return a.fn;const n=a.nama.toLowerCase();if(tp(a.kode)=='5')return'pokok';if(/penjualan|pemasaran|angkut|ekspor|promosi/.test(n))return'jual';if(/lain-lain|lainnya|selisih kurs/.test(n))return'lain';return'umum'}
 const psOpts=(t,v)=>'<option value="">Otomatis</option>'+(PSO[t]||[]).map(p=>`<option value="${p}" ${v==p?'selected':''}>${PSL[p]}</option>`).join('');
