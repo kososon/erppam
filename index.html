@@ -251,7 +251,13 @@ function editCoa(k){const a=S.coa.find(x=>x.kode==k);mdl('Edit akun',`<label cla
 if(nk!=k){S.jr.forEach(j=>j.lines.forEach(l=>{if(l.k==k)l.k=nk}));[S.sa,S.pr].forEach(T=>Object.values(T).forEach(y=>{if(y&&k in y){y[nk]=y[k];delete y[k]}}));Object.keys(S.set).forEach(x=>{if(S.set[x]==k)S.set[x]=nk});Object.values(S.map).forEach(m=>{if(m)['a','k','b'].forEach(z=>{if(m[z]==k)m[z]=nk})});if(window.ba==k)window.ba=nk}
 a.kode=nk;a.nama=nn;a.nm=o.querySelector('#em').value;save();go('coa')})}
 // ---- Jurnal: template, ekspor, impor ----
-function jrBar(){return`<div class="card"><div class="row"><b>Excel</b><button class="g" onclick="jrTpl()">Unduh template</button><button class="g" onclick="jrExport()">Ekspor jurnal ${Y}</button><label class="k">Impor: <input type="file" accept=".xlsx,.xls,.csv" onchange="jrImport(event)"></label></div><div class="k">Baris dengan No Trx yang sama menjadi satu jurnal (debit harus sama dengan kredit). No Trx yang sudah ada pada jurnal manual akan menggantikan jurnal itu; selain itu ditambahkan sebagai jurnal baru. Jurnal otomatis penjualan tidak ikut diimpor.</div></div>`}
+function jrBar(){return`<div class="card"><div class="row"><b>Excel</b><button class="g" onclick="jrTpl()">Unduh template</button><button class="g" onclick="jrExport()">Ekspor jurnal ${Y}</button><label class="k">Impor: <input type="file" accept=".xlsx,.xls,.csv" onchange="jrImport(event)"></label><button class="r" onclick="hapusSemuaJU()">Hapus semua Jurnal Umum (JU) ${Y}</button></div><div class="k">Baris dengan No Trx yang sama menjadi satu jurnal (debit harus sama dengan kredit, boleh lebih dari 2 baris). No Trx yang sudah ada pada jurnal manual akan menggantikan jurnal itu; selain itu ditambahkan sebagai jurnal baru. Jurnal otomatis penjualan tidak ikut diimpor. Ekspor sudah terurut per tanggal. Tombol "Hapus semua Jurnal Umum" hanya menghapus jurnal manual (nomor JU-...) tahun ${Y}; jurnal otomatis penjualan, penutup, dan kapitalisasi (JK) tidak ikut terhapus.</div></div>`}
+function hapusSemuaJU(){const ids=S.jr.filter(j=>inYear(j.tgl,Y)&&/^JU-/.test(j.no||'')).map(j=>j.id);if(!ids.length)return alert('Tidak ada Jurnal Umum (JU) tahun '+Y+' untuk dihapus.');
+konfirm('Hapus <b>'+ids.length+'</b> Jurnal Umum (JU) tahun '+Y+'? Jurnal otomatis penjualan, jurnal penutup, dan jurnal kapitalisasi (JK) TIDAK ikut terhapus. Pastikan sudah Backup bila perlu, aksi ini tidak bisa dibatalkan.',()=>{
+S.jr=S.jr.filter(j=>!ids.includes(j.id));
+S.aset.forEach(a=>{a.tambah=(a.tambah||[]).filter(t=>!ids.includes(t.jid));if(a.disposed&&ids.includes(a.disposed.jid))delete a.disposed});
+S.aset=S.aset.filter(a=>!(a.createdJid&&ids.includes(a.createdJid)));
+save();go('jr');alert(ids.length+' Jurnal Umum (JU) tahun '+Y+' dihapus.')})}
 function jrTpl(){const k1=S.coa[0]?S.coa[0].kode:'111.00.001',k2=S.coa[1]?S.coa[1].kode:'311.00.001',w=XLSX.utils.book_new();
 XLSX.utils.book_append_sheet(w,fz(XLSX.utils.aoa_to_sheet([['No Trx','Tanggal','Keterangan','Kode Akun','Debit','Kredit','Pihak/Barang','Qty'],['',Y+'-01-31','Contoh jurnal',k1,1000000,0,'',''],['',Y+'-01-31','Contoh jurnal',k2,0,1000000,'','']])),'Jurnal');
 XLSX.utils.book_append_sheet(w,XLSX.utils.aoa_to_sheet([['Kode Akun','Nama Akun','Normal'],...S.coa.map(a=>[a.kode,a.nama,a.nm=='d'?'Debit':'Kredit'])]),'Daftar Akun');
@@ -766,3 +772,4 @@ const _setV10=PG.set;PG.set=()=>_setV10()+`<div class="card"><b>Margin cetak (mm
 initSub();if(migrateKode())localStorage.pam=JSON.stringify({...S,inv:[]});
 if(sessionStorage.ok){$('lg').style.display='none';boot()}else $('lg').style.display='flex';
 </script></body></html>
+
