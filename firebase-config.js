@@ -1,7 +1,7 @@
 <script>
 window.FIREBASE_CONFIG = {
-  apiKey: "AIzaSyDxJFBoNX7nFtItxY4a9KxbwOMKe0AnOtM",       // dari Project Settings > General > Web API Key
-  projectId: "pam-akuntansi",
-  emailDomain: "pam-invoice.app"   // opsional, boleh diganti bebas
+  apiKey: "AIzaSyBzuu2fTCBf3XPzsbLN1g1CNWMc1MoHoOU",
+  projectId: "incoice-pam",
+  emailDomain: "pam-invoice.app"
 };
 </script>
